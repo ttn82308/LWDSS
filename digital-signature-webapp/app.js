@@ -1,4 +1,4 @@
-// app.js - Đã sửa lỗi import, loại bỏ thư viện lỗi, thêm xác thực PDF mô phỏng
+// app.js - Phiên bản sửa lỗi phần 5, thêm console.log để dễ debug
 import { 
     generateKeyPair, 
     signMessage, 
@@ -25,14 +25,18 @@ const pdfInput = document.getElementById('pdfInput');
 const signPdfBtn = document.getElementById('signPdfBtn');
 const pdfStatus = document.getElementById('pdfStatus');
 
-// Xác thực PDF mô phỏng (không dùng thư viện lỗi)
+// Xác thực PDF phần 5 - kiểm tra kỹ ID
 const pdfStandardInput = document.getElementById('verifyPdfStandardInput');
 const pdfStandardBtn = document.getElementById('verifyPdfStandardBtn');
 const pdfStandardVerifyResult = document.getElementById('pdfStandardVerifyResult');
 const pdfStandardSignatureDetails = document.getElementById('pdfStandardSignatureDetails');
 const signatureStandardInfo = document.getElementById('signatureStandardInfo');
 
-// Các biến toàn cục
+// Kiểm tra nếu các element tồn tại
+console.log('PDF Standard Input:', pdfStandardInput);
+console.log('PDF Standard Button:', pdfStandardBtn);
+console.log('PDF Standard Verify Result:', pdfStandardVerifyResult);
+
 let currentPublicKey = null;
 let currentPrivateKey = null;
 let currentPdfBytes = null;
@@ -144,7 +148,7 @@ function removeVietnameseTones(str) {
     return str;
 }
 
-// ========== PDF Function thêm text (đã sửa lỗi font) ==========
+// ========== PDF Function thêm text ==========
 async function addTextToPDF(pdfBytes, text) {
     if (!window.PDFLib) {
         throw new Error('PDFLib chưa được tải. Vui lòng kiểm tra kết nối mạng hoặc tải lại trang.');
@@ -213,15 +217,18 @@ if (signPdfBtn) {
     });
 }
 
-// ========== Xác thực PDF mô phỏng (mock) - hoạt động ổn định, không cần thư viện lỗi ==========
-// Hàm mô phỏng kiểm tra sự tồn tại của chữ ký số trong PDF (dựa trên tìm kiếm chuỗi '/Sig' hoặc '/ByteRange')
-// Đây chỉ là demo, không xác thực mật mã học thực sự, nhưng đủ để minh họa luồng.
+// ========== Xác thực PDF phần 5 (mock, nhưng có debug) ==========
 function mockVerifyPDF(pdfBytes) {
-    // Chuyển đổi Uint8Array thành chuỗi để tìm kiếm các từ khóa của chữ ký số
-    const text = new TextDecoder().decode(pdfBytes.slice(0, 5000)); // Chỉ đọc 5KB đầu
+    // Đọc 10KB đầu để tìm dấu hiệu chữ ký số
+    const bytesToCheck = pdfBytes.slice(0, 10000);
+    let text = '';
+    try {
+        text = new TextDecoder().decode(bytesToCheck);
+    } catch(e) {
+        text = '';
+    }
     const hasSignature = text.includes('/Sig') || text.includes('/ByteRange') || text.includes('adbe.pkcs7');
-    
-    // Tạo kết quả giả lập
+    console.log('Mock verify - hasSignature:', hasSignature);
     return {
         verified: hasSignature,
         authenticity: hasSignature,
@@ -245,33 +252,43 @@ function mockVerifyPDF(pdfBytes) {
     };
 }
 
+// Gắn sự kiện cho phần 5 - kiểm tra kỹ nếu các element tồn tại
 if (pdfStandardInput) {
+    console.log('Gắn sự kiện change cho pdfStandardInput');
     pdfStandardInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
+        console.log('File selected:', file);
         if (file && file.type === 'application/pdf') {
             const arrayBuffer = await file.arrayBuffer();
             currentStandardPdfBytes = new Uint8Array(arrayBuffer);
-            pdfStandardVerifyResult.innerHTML = `<span style="color: green;">✅ Đã tải: ${file.name}</span>`;
-            pdfStandardBtn.disabled = false;
-            pdfStandardSignatureDetails.style.display = 'none';
+            if (pdfStandardVerifyResult) {
+                pdfStandardVerifyResult.innerHTML = `<span style="color: green;">✅ Đã tải: ${file.name}</span>`;
+            }
+            if (pdfStandardBtn) pdfStandardBtn.disabled = false;
+            if (pdfStandardSignatureDetails) pdfStandardSignatureDetails.style.display = 'none';
         } else {
-            pdfStandardVerifyResult.innerHTML = '<span style="color: red;">❌ Vui lòng chọn file PDF hợp lệ.</span>';
-            pdfStandardBtn.disabled = true;
+            if (pdfStandardVerifyResult) {
+                pdfStandardVerifyResult.innerHTML = '<span style="color: red;">❌ Vui lòng chọn file PDF hợp lệ.</span>';
+            }
+            if (pdfStandardBtn) pdfStandardBtn.disabled = true;
         }
     });
+} else {
+    console.error('Không tìm thấy phần tử pdfStandardInput (id="verifyPdfStandardInput")');
 }
 
 if (pdfStandardBtn) {
+    console.log('Gắn sự kiện click cho pdfStandardBtn');
     pdfStandardBtn.addEventListener('click', async () => {
+        console.log('Nút xác thực được nhấn');
         if (!currentStandardPdfBytes) {
             showNotification('Hãy tải file PDF lên trước!', 'warning');
             return;
         }
-
         try {
             showNotification('Đang xác thực chữ ký PDF...', 'info');
-            // Sử dụng hàm mock thay vì thư viện lỗi
             const result = mockVerifyPDF(currentStandardPdfBytes);
+            console.log('Kết quả mock:', result);
             
             let resultHtml = '<h3>Kết quả xác thực (Mock):</h3>';
             resultHtml += `<p><strong>✅ Xác thực tổng thể:</strong> ${result.verified ? 'THÀNH CÔNG' : 'THẤT BẠI'}</p>`;
@@ -279,10 +296,12 @@ if (pdfStandardBtn) {
             resultHtml += `<p><strong>📄 Tính toàn vẹn (Integrity):</strong> ${result.integrity ? 'Nguyên vẹn' : 'Đã bị thay đổi'}</p>`;
             resultHtml += `<p><strong>⏰ Hạn chứng chỉ (Expired):</strong> ${result.expired ? 'Đã hết hạn' : 'Còn hiệu lực'}</p>`;
             resultHtml += `<p><em>Lưu ý: Đây là kết quả mô phỏng dựa trên phát hiện trường chữ ký. Để xác thực thực sự, cần tích hợp backend.</em></p>`;
-            pdfStandardVerifyResult.innerHTML = resultHtml;
-            pdfStandardVerifyResult.className = `result ${result.verified ? 'valid' : 'invalid'}`;
+            if (pdfStandardVerifyResult) {
+                pdfStandardVerifyResult.innerHTML = resultHtml;
+                pdfStandardVerifyResult.className = `result ${result.verified ? 'valid' : 'invalid'}`;
+            }
             
-            if (result.signatures && result.signatures.length > 0) {
+            if (result.signatures && result.signatures.length > 0 && pdfStandardSignatureDetails && signatureStandardInfo) {
                 pdfStandardSignatureDetails.style.display = 'block';
                 let sigHtml = '';
                 result.signatures.forEach((sig, index) => {
@@ -298,25 +317,29 @@ if (pdfStandardBtn) {
                 });
                 signatureStandardInfo.innerHTML = sigHtml;
                 showNotification(`Phát hiện chữ ký (mock) trong file PDF!`, 'success');
-            } else {
+            } else if (pdfStandardSignatureDetails && signatureStandardInfo) {
                 pdfStandardSignatureDetails.style.display = 'block';
                 signatureStandardInfo.innerHTML = '<p>Không tìm thấy chữ ký số nào trong file PDF này.</p>';
                 showNotification('Không tìm thấy chữ ký số!', 'warning');
             }
         } catch (error) {
             console.error("Lỗi khi xác thực PDF:", error);
-            pdfStandardVerifyResult.innerHTML = `<span style="color: red;">❌ Lỗi xác thực: ${error.message}</span>`;
-            pdfStandardVerifyResult.className = 'result invalid';
+            if (pdfStandardVerifyResult) {
+                pdfStandardVerifyResult.innerHTML = `<span style="color: red;">❌ Lỗi xác thực: ${error.message}</span>`;
+                pdfStandardVerifyResult.className = 'result invalid';
+            }
             showNotification('Lỗi xác thực PDF: ' + error.message, 'error');
         }
     });
+} else {
+    console.error('Không tìm thấy phần tử pdfStandardBtn (id="verifyPdfStandardBtn")');
 }
 
 // Gắn sự kiện
-generateKeyBtn.addEventListener('click', handleGenerateKey);
-signBtn.addEventListener('click', handleSign);
-copySignatureBtn.addEventListener('click', handleCopySignature);
-verifyBtn.addEventListener('click', handleVerify);
+if (generateKeyBtn) generateKeyBtn.addEventListener('click', handleGenerateKey);
+if (signBtn) signBtn.addEventListener('click', handleSign);
+if (copySignatureBtn) copySignatureBtn.addEventListener('click', handleCopySignature);
+if (verifyBtn) verifyBtn.addEventListener('click', handleVerify);
 
 // Khởi tạo: tải key từ localStorage nếu có
 const saved = loadKeyPair();
