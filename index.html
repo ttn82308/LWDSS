@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ thống Chữ ký số - Đồ án CNTT</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- PDF-lib và fontkit -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://unpkg.com/@pdf-lib/fontkit@1.0.0/dist/fontkit.umd.min.js"></script>
+    
+    <!-- PDF.js (preview) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+    </script>
+
+    <!-- Importmap (giữ nếu cần) -->
+    <script type="importmap">
+        {
+            "imports": {
+                "@ninja-labs/verify-pdf": "https://cdn.skypack.dev/@ninja-labs/verify-pdf"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🔐 Hệ thống Chữ ký số</h1>
+
+        <!-- PHẦN ĐĂNG NHẬP -->
+        <div class="card" id="loginCard">
+            <h2>🔑 Đăng nhập</h2>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
+                <div style="flex:1;">
+                    <label>Tên đăng nhập:</label>
+                    <input type="text" id="usernameInput" value="admin" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc;" />
+                </div>
+                <div style="flex:1;">
+                    <label>Mật khẩu:</label>
+                    <input type="password" id="passwordInput" value="admin123" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc;" />
+                </div>
+                <button id="loginBtn" style="margin-top:18px;">Đăng nhập</button>
+            </div>
+            <div style="margin-top:10px; font-size:14px; color:#555;">
+                <strong>Tài khoản mặc định:</strong> admin/admin123, user1/user123, user2/user123
+            </div>
+            <div id="loginStatus" style="margin-top:10px; font-weight:bold;"></div>
+        </div>
+
+        <!-- PHẦN THÔNG TIN NGƯỜI DÙNG -->
+        <div class="card" id="userInfoCard" style="display: none;">
+            <h2>👤 Người dùng hiện tại</h2>
+            <div><strong>Tên:</strong> <span id="currentUserDisplay">---</span></div>
+            <div><strong>Vai trò:</strong> <span id="currentUserRoleDisplay">---</span></div>
+            <div><strong>Public Key (Base64):</strong> <span id="userPublicKeyDisplay" style="font-family:monospace; font-size:12px; word-break:break-all;">---</span></div>
+            <button id="logoutBtn" style="margin-top:10px;">🚪 Đăng xuất</button>
+        </div>
+
+        <!-- Phần 2: Ký số trên văn bản -->
+        <div class="card">
+            <h2>✍️ 2. Ký số (Signing)</h2>
+            <label for="messageInput">Văn bản cần ký:</label>
+            <textarea id="messageInput" rows="4" placeholder="Nhập nội dung cần ký..."></textarea>
+            <button id="signBtn" disabled>🔏 Ký số</button>
+            <div>
+                <strong>Chữ ký (Base64):</strong>
+                <div id="signatureDisplay" class="signature-box">Chưa ký</div>
+                <button id="copySignatureBtn" style="display: none;">📋 Sao chép chữ ký</button>
+            </div>
+        </div>
+
+        <!-- Phần 3: Xác thực (Hỗ trợ khóa tùy chỉnh) -->
+        <div class="card">
+            <h2>✅ 3. Xác thực chữ ký (Verification)</h2>
+            <label for="verifyMessageInput">Văn bản gốc:</label>
+            <textarea id="verifyMessageInput" rows="4" placeholder="Nhập văn bản gốc cần xác thực..."></textarea>
+            <label for="signatureInput">Chữ ký (Base64):</label>
+            <textarea id="signatureInput" rows="2" placeholder="Dán chữ ký vào đây..."></textarea>
+            <label for="verifyPublicKeyInput">Public Key của người ký (Base64) - <em>để trống sẽ dùng khóa của bạn</em>:</label>
+            <textarea id="verifyPublicKeyInput" rows="2" placeholder="Dán Public Key của người ký vào đây (hoặc để trống)"></textarea>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button id="verifyBtn" disabled>🔍 Xác thực (khóa của tôi)</button>
+                <button id="verifyWithCustomKeyBtn" disabled>🔍 Xác thực với khóa nhập</button>
+            </div>
+            <div id="verifyResult" class="result"></div>
+        </div>
+
+        <!-- Phần 4: Ký số trực quan lên PDF -->
+        <div class="card">
+            <h2>✍️ 4. Ký số lên PDF (chọn vùng và ký)</h2>
+            <input type="file" id="pdfSignInput" accept=".pdf" disabled />
+            <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 10px;">
+                <!-- Bên trái: preview PDF -->
+                <div style="flex: 2;">
+                    <canvas id="pdfPreviewCanvas" style="border: 1px solid #ccc; width: 100%; background: #f9f9f9;"></canvas>
+                    <div style="margin-top: 10px;">
+                        <button id="prevPageBtn" disabled>◀ Trang trước</button>
+                        <span id="pageNumDisplay">Trang 1 / ?</span>
+                        <button id="nextPageBtn" disabled>Trang sau ▶</button>
+                    </div>
+                    <p><small>🔍 Click chuột lên PDF để chọn vị trí đặt chữ ký</small></p>
+                    <p><strong>Vị trí đã chọn:</strong> <span id="selectedPosition">Chưa chọn</span></p>
+                </div>
+                <!-- Bên phải: các phương thức ký -->
+                <div style="flex: 1;">
+                    <!-- Vẽ tay -->
+                    <label>🖌️ Vẽ chữ ký của bạn:</label>
+                    <canvas id="signatureCanvas" width="300" height="150" style="border: 2px solid #333; background: transparent; cursor: crosshair;"></canvas>
+                    <div style="margin-top: 5px;">
+                        <button id="clearSignatureBtn">Xóa chữ ký</button>
+                    </div>
+                    <hr />
+                    <!-- Tải ảnh PNG -->
+                    <label>🖼️ Hoặc tải ảnh chữ ký (PNG):</label>
+                    <input type="file" id="uploadSignatureImage" accept="image/png" disabled />
+                    <div style="margin-top: 5px;">
+                        <img id="previewSignatureImg" style="max-width: 150px; max-height: 80px; display: none; border: 1px solid #ccc;" />
+                    </div>
+                    <!-- Tải ảnh dấu mộc -->
+                    <div style="margin-top: 10px;">
+                        <label for="uploadStampImage"><b>Chọn ảnh dấu mộc (PNG trong suốt):</b></label>
+                        <input type="file" id="uploadStampImage" accept="image/png" />
+                        <img id="previewStampImg" src="" alt="Preview dấu mộc" style="max-width: 100px; display: none; margin-top: 5px; border: 1px dashed #ccc; padding: 2px;" />
+                    </div>
+                    <!-- <hr /> -->
+                    <!-- Nhập text ký -->
+                    <label>✏️ Hoặc nhập text ký:</label>
+                    <textarea id="signatureTextInput" rows="2" placeholder="Ví dụ: Đã ký bởi Nguyễn Văn A" style="width:100%;" disabled></textarea>
+                    <div style="margin-top: 15px;">
+                        <button id="confirmSignBtn" disabled>✅ Đặt chữ ký (ảnh)</button>
+                        <button id="signTextBtn" disabled>📝 Ký dạng chữ</button>
+                    </div>
+                </div>
+            </div>
+            <div id="pdfSignStatus" class="status-box"></div>
+            <p class="note"><small>Lưu ý: Chữ ký ảnh và dạng chữ đều được nhúng vào PDF tại vị trí đã chọn. Kéo thả ảnh PNG trực tiếp lên bản xem trước để đặt nhanh.</small></p>
+        </div>
+
+        <!-- Phần 5: Xác thực chữ ký chuẩn (PKCS#7) từ PDF -->
+        <div class="card">
+            <h2>🔍 5. Xác thực chữ ký chuẩn (PKCS#7) từ PDF</h2>
+            <p>Chọn file PDF đã được ký số bằng chứng chỉ thực và kiểm tra kết quả xác thực.</p>
+            <input type="file" id="verifyPdfStandardInput" accept=".pdf" disabled />
+            <button id="verifyPdfStandardBtn" disabled>✅ Xác thực PDF</button>
+            <div id="pdfStandardVerifyResult" class="result"></div>
+            <div id="pdfStandardSignatureDetails" style="margin-top: 15px; display: none;">
+                <h3>Chi tiết chữ ký:</h3>
+                <div id="signatureStandardInfo" style="background: #f30202; padding: 10px; border-radius: 8px; font-size: 14px;"></div>
+            </div>
+            <!-- THÊM NÚT TẠO PDF MẪU -->
+            <hr />
+            <button id="createSamplePdfBtn" style="margin-top: 10px;">🖨️ Tạo PDF mẫu có chữ ký (mock)</button>
+            <p><small>Nhấn nút này để tạo một file PDF mẫu chứa các từ khóa chữ ký số. Sau đó tải lên và nhấn "Xác thực PDF" để kiểm tra.</small></p>
+        </div>
+
+    <!-- Import các module -->
+    <script type="module" src="crypto-utils.js"></script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
