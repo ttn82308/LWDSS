@@ -9,9 +9,9 @@ import {
 
 // ========== CẤU HÌNH TÀI KHOẢN ==========
 const ACCOUNTS = {
-  admin: { password: 'admin123', role: 'admin', displayName: 'Quan tri vien' },
-  user1: { password: 'user123', role: 'user', displayName: 'Nguyen Van A' },
-  user2: { password: 'user123', role: 'user', displayName: 'Tran Thi B' },
+  admin: { password: 'admin123', role: 'admin', displayName: 'Giam doc' },
+  user1: { password: 'user123', role: 'user', displayName: 'Pho giam doc' },
+  user2: { password: 'user123', role: 'user', displayName: 'Ke toan' },
 };
 
 let currentUser = null;
@@ -75,7 +75,14 @@ const uploadStampInput = document.getElementById('uploadStampImage');
 const previewStampImg = document.getElementById('previewStampImg');
 
 // Thêm biến toàn cục lưu trữ dữ liệu dấu mộc
+// ========== DẤU MỘC MẶC ĐỊNH ==========
+let defaultStampBase64 = null;
+const DEFAULT_STAMP_PATH = './default-stamp.png';
 let uploadedStampBase64 = null;
+
+// ========== CHỮ KÝ MẶC ĐỊNH THEO USERNAME ==========
+let defaultSignatureBase64 = null;
+const SIGNATURE_FOLDER = './signatures/';   // Thư mục chứa ảnh chữ ký mặc định
 
 // Biến toàn cục
 let pdfDoc = null;
@@ -88,6 +95,12 @@ let currentStandardPdfBytes = null;
 let uploadedSignatureBase64 = null;
 let droppedSignatureBase64 = null;
 
+function toggleStampSection() {
+  const stampSection = document.getElementById('stampSection');
+  if (stampSection) {
+    stampSection.style.display = (currentUser && currentUser.username === 'admin') ? 'block' : 'none';
+  }
+}
 // ========== Helper: hiển thị thông báo ==========
 function showNotification(message, type) {
   const notification = document.createElement('div');
@@ -105,6 +118,61 @@ function showNotification(message, type) {
   setTimeout(() => notification.remove(), 3000);
 }
 
+
+// Load dấu mộc mặc định cho Admin
+async function loadDefaultStamp() {
+  if (!currentUser || currentUser.username !== 'admin') return;
+
+  try {
+    const response = await fetch(DEFAULT_STAMP_PATH);
+    if (!response.ok) throw new Error('Không tìm thấy file');
+
+    const blob = await response.blob();
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      defaultStampBase64 = e.target.result.split(',')[1];
+      uploadedStampBase64 = defaultStampBase64;
+
+      const preview = document.getElementById('previewStampImg');
+      if (preview) preview.style.display = 'block';
+
+      console.log('✅ Đã load dấu mộc mặc định cho Admin');
+    };
+    reader.readAsDataURL(blob);
+  } catch (err) {
+    console.warn('⚠️ Không load được dấu mộc mặc định:', err);
+  }
+}
+
+// Load ảnh chữ ký mặc định theo username
+async function loadDefaultSignature() {
+  if (!currentUser) return null;
+
+  try {
+    const signaturePath = `${SIGNATURE_FOLDER}${currentUser.username}.png`;
+    const response = await fetch(signaturePath);
+
+    if (!response.ok) {
+      console.warn(`⚠️ Không tìm thấy chữ ký mặc định: ${signaturePath}`);
+      return null;
+    }
+
+    const blob = await response.blob();
+    const reader = new FileReader();
+
+    return new Promise((resolve) => {
+      reader.onload = (e) => {
+        defaultSignatureBase64 = e.target.result.split(',')[1];
+        console.log(`✅ Đã load chữ ký mặc định cho ${currentUser.username}`);
+        resolve(defaultSignatureBase64);
+      };
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn('⚠️ Không load được chữ ký mặc định:', err);
+    return null;
+  }
+}
 // ========== QUẢN LÝ KHÓA THEO NGƯỜI DÙNG ==========
 function saveUserKey(username, publicKey, privateKey) {
   localStorage.setItem('user_keys_' + username, JSON.stringify({ publicKey, privateKey }));
@@ -177,9 +245,14 @@ loginBtn.addEventListener('click', async () => {
   nextPageBtn.disabled = false;
 
   showNotification(`Chào mừng ${currentUser.displayName}!`, 'success');
+  await loadDefaultStamp();
+  await loadDefaultSignature();     // ← Thêm dòng này
+  toggleStampSection();
 });
 
 logoutBtn.addEventListener('click', () => {
+  uploadedStampBase64 = null;
+  defaultStampBase64 = null;
   if (uploadStampInput) uploadStampInput.disabled = true;
   currentUser = null;
   loginCard.style.display = 'block';
@@ -314,11 +387,26 @@ function removeVietnameseTones(str) {
 // ========== HELPER: APPEND CHỮ KÝ ECDSA VÀO CUỐI PDF ==========
 async function appendCryptoSignature(pdfBytes, username) {
   try {
-    const keys = await getOrCreateUserKey(username);
-    const messageForSigning = "He thong chu ky so - Do an CNTT. Xac thuc thuat toan ECDSA.";
-    const signature = await signMessage(keys.privateKey, messageForSigning);
+    console.log("=== APPEND CRYPTO SIGNATURE ===");
+    console.log("PDF gốc size:", pdfBytes.length);
 
-    const sigBlock = `\n%%SIG_START%%\nusername:${username}\nsignature:${signature}\n%%SIG_END%%\n`;
+    // Tính hash TRƯỚC khi nhúng bất kỳ thứ gì
+    const hashBuffer = await crypto.subtle.digest('SHA-256', pdfBytes);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+    const keys = await getOrCreateUserKey(username);
+    const signature = await signMessage(keys.privateKey, hashHex);
+
+    const signTime = new Date().toISOString();
+
+    const sigBlock =
+      `%%SIG_START%%
+      username:${username}
+      signTime:${signTime}
+      hash:${hashHex}
+      signature:${signature}
+      %%SIG_END%%`;
 
     const encoder = new TextEncoder();
     const sigBytes = encoder.encode(sigBlock);
@@ -327,64 +415,98 @@ async function appendCryptoSignature(pdfBytes, username) {
     finalPdf.set(pdfBytes, 0);
     finalPdf.set(sigBytes, pdfBytes.length);
 
-    console.log("✅ Đã append block chữ ký ECDSA vào cuối PDF. Kích thước mới:", finalPdf.length);
+    console.log("✅ Hash gốc:", hashHex.substring(0, 40) + "...");
+    console.log("✅ Append hoàn tất, kích thước mới:", finalPdf.length);
+    console.log("Original last 20 bytes:");
+    console.log(Array.from(pdfBytes.slice(-20)));
+    console.log("Original PDF length:", pdfBytes.length);
+
+    const testHash = await crypto.subtle.digest("SHA-256", pdfBytes);
+
+    console.log(
+      "Hash before save:",
+      Array.from(new Uint8Array(testHash))
+        .map(x => x.toString(16).padStart(2, "0"))
+        .join("")
+    );
     return finalPdf;
   } catch (err) {
-    console.error("❌ Lỗi append chữ ký:", err);
+    console.error("❌ Append error:", err);
     return pdfBytes;
   }
 }
 
-// 2. Hàm bóc tách chữ ký (CHỈ ĐỊNH NGHĨA 1 LẦN)
 // 2. Hàm bóc tách chữ ký (ĐÃ CẢI TIẾN)
 function extractActualPdfSignature(pdfBytes) {
-  console.log("=== DEBUG extractActualPdfSignature ===");
+  console.log("=== BẮT ĐẦU extractActualPdfSignature ===");
   console.log("Tổng kích thước PDF:", pdfBytes.length, "bytes");
 
   const startTag = "%%SIG_START%%";
   const endTag = "%%SIG_END%%";
-  const lastBytesCount = Math.min(pdfBytes.length, 8192);
-  const tailBytes = pdfBytes.slice(pdfBytes.length - lastBytesCount);
-  const tailStr = new TextDecoder('utf-8', { fatal: false }).decode(tailBytes);
+  const sigStart = findSignatureStart(pdfBytes);
 
-  console.log(`Đang kiểm tra ${lastBytesCount} byte cuối`);
-  console.log("Start tag có?", tailStr.includes(startTag));
-  console.log("End tag có?", tailStr.includes(endTag));
+  if (sigStart === -1) {
+    return null;
+  }
+
+  const tailStr = new TextDecoder().decode(
+    pdfBytes.slice(sigStart)
+  );
+
+  // console.log(`Đang quét ${lastBytesCount} byte cuối của file`);
 
   const startIndex = tailStr.indexOf(startTag);
   const endIndex = tailStr.indexOf(endTag);
 
-  console.log("startIndex:", startIndex, "endIndex:", endIndex);
+  console.log(`Vị trí startTag: ${startIndex}, endTag: ${endIndex}`);
 
   if (startIndex === -1 || endIndex === -1 || startIndex >= endIndex) {
-    console.warn("❌ Không tìm thấy block chữ ký!");
+    console.warn("❌ KHÔNG TÌM THẤY BLOCK CHỮ KÝ!");
+    console.log("20 ký tự đầu tail:", tailStr.substring(0, 200));
     return null;
   }
 
-  let sigBlock = tailStr.substring(startIndex + startTag.length, endIndex).trim();
-  console.log("Raw sigBlock:", JSON.stringify(sigBlock)); // Debug xem có ký tự lạ không
+  const sigBlock = tailStr.substring(startIndex + startTag.length, endIndex).trim();
+  console.log("Raw sigBlock:", JSON.stringify(sigBlock));
 
-  // Cải tiến parse: xử lý nhiều kiểu newline và khoảng trắng
   const lines = sigBlock.split(/\r?\n|\r/).map(line => line.trim());
 
-  let username = "", signature = "";
+  let username = "";
+  let signTime = "";
+  let hash = "";
+  let signature = "";
 
   lines.forEach(line => {
-    if (line.startsWith("username:")) {
+
+    if (line.startsWith("username:"))
       username = line.replace("username:", "").trim();
-    } else if (line.startsWith("signature:")) {
+
+    else if (line.startsWith("signTime:"))
+      signTime = line.replace("signTime:", "").trim();
+
+    else if (line.startsWith("hash:"))
+      hash = line.replace("hash:", "").trim();
+
+    else if (line.startsWith("signature:"))
       signature = line.replace("signature:", "").trim();
-    }
+
   });
 
-  console.log("Trích xuất được -> username:", username);
-  console.log("Trích xuất được -> signature:", signature ? signature.substring(0, 80) + "..." : "NULL");
+  console.log("Trích xuất được:");
+  console.log("→ username:", username);
+  console.log("→ hash:", hash ? hash.substring(0, 40) + "..." : "NULL");
+  console.log("→ signature length:", signature ? signature.length : 0);
 
-  if (!signature) {
-    console.error("❌ Signature rỗng sau khi parse! Kiểm tra lại sigBlock");
-  }
+  console.log("=== KẾT THÚC extractActualPdfSignature ===");
 
-  return (username && signature) ? { username, signature } : null;
+  return (username && hash && signature)
+    ? {
+      username,
+      signTime,
+      hash,
+      signature
+    }
+    : null;
 }
 
 // 3. Sự kiện nạp file (CHỈ ĐỊNH NGHĨA 1 LẦN)
@@ -412,66 +534,127 @@ if (verifyPdfStandardBtn) {
       return;
     }
 
-    showNotification('Đang kiểm tra chữ ký...', 'info');
+    console.log("=== BẮT ĐẦU VERIFY PDF ===");
+    showNotification('Đang kiểm tra tính toàn vẹn...', 'info');
 
-    const extractedData = extractActualPdfSignature(currentStandardPdfBytes);
-
-    if (extractedData) {
-      // Xác thực mật mã học (ECDSA)
-      try {
-        const { username, signature } = extractedData;
-        const stored = localStorage.getItem('user_keys_' + username);
-        if (!stored) throw new Error("Không tìm thấy khóa công khai!");
-
-        const { publicKey } = JSON.parse(stored);
-        const isValid = await verifySignature(publicKey, "He thong chu ky so - Do an CNTT. Xac thuc thuat toan ECDSA.", signature);
-
-        if (isValid) {
-
-          pdfStandardVerifyResult.innerHTML = `
-        <div style="color:green;font-weight:bold;">
-            ✅ CHỮ KÝ PDF HỢP LỆ
-        </div>
-    `;
-
-          signatureStandardInfo.innerHTML = `
-        <p><b>Người ký:</b> ${username}</p>
-        <p><b>Thuật toán:</b> ECDSA</p>
-        <p><b>Trạng thái:</b> Hợp lệ</p>
-        <p><b>Signature:</b></p>
-        <div style="
-            word-break: break-all;
-            font-family: monospace;
-            font-size:12px;
-            background:#fff;
-            padding:8px;
-            border-radius:4px;
-        ">
-            ${signature}
-        </div>
-    `;
-
-          pdfStandardSignatureDetails.style.display = 'block';
-
-          showNotification(
-            'Xác thực ECDSA thành công!',
-            'success'
-          );
-        } else {
-          showNotification('Chữ ký không hợp lệ!', 'error');
-        }
-      } catch (err) {
-        showNotification('Lỗi: ' + err.message, 'error');
-      }
-    } else {
-      // Chạy chế độ Mock nếu không tìm thấy chữ ký thật
-      if (typeof runMockVerification === 'function') {
-        runMockVerification();
-      } else {
-        showNotification('Không tìm thấy chữ ký trong tệp!', 'error');
-      }
+    const extracted = extractActualPdfSignature(currentStandardPdfBytes);
+    if (!extracted) {
+      showNotification('Không tìm thấy chữ ký số!', 'error');
+      return;
     }
+
+    const {
+      username,
+      signTime,
+      hash: originalHash,
+      signature
+    } = extracted;
+    const displayName = ACCOUNTS[username]?.displayName || username;
+    try {
+      // Tìm vị trí bắt đầu của block signature
+      const startTag = "%%SIG_START%%";
+      const sigStart = findSignatureStart(currentStandardPdfBytes);
+
+      if (sigStart === -1) {
+        throw new Error("Không tìm thấy Signature Block");
+      }
+
+      let contentEnd = sigStart;
+
+      // Nếu ngay trước Signature là ký tự xuống dòng thì bỏ nó
+      if (
+        contentEnd > 0 &&
+        (
+          currentStandardPdfBytes[contentEnd - 1] === 10 || // LF
+          currentStandardPdfBytes[contentEnd - 1] === 13    // CR
+        )
+      ) {
+        contentEnd--;
+      }
+
+      const pdfContentOnly =
+        currentStandardPdfBytes.slice(0, contentEnd);
+      console.log("sigStart =", sigStart);
+      console.log("Byte trước Signature =", currentStandardPdfBytes[sigStart - 1]);
+
+      console.log("Recovered last 20 bytes:");
+      console.log(Array.from(pdfContentOnly.slice(-20)));
+
+      // Tính hash lại
+      console.log(
+        "Recovered PDF length:",
+        pdfContentOnly.length
+      );
+      const hashBuffer = await crypto.subtle.digest('SHA-256', pdfContentOnly);
+      const currentHashHex = Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+
+      console.log("Hash gốc (khi ký) :", originalHash.substring(0, 40) + "...");
+      console.log("Hash tính lại     :", currentHashHex.substring(0, 40) + "...");
+      console.log("Hash khớp?", currentHashHex === originalHash);
+
+      // Verify chữ ký
+      const stored = localStorage.getItem('user_keys_' + username);
+      if (!stored) throw new Error("Không tìm thấy public key");
+
+      const { publicKey } = JSON.parse(stored);
+      const isSigValid = await verifySignature(publicKey, originalHash, signature);
+
+      if (currentHashHex === originalHash && isSigValid) {
+        const signAlgorithm = "ECDSA + SHA-256";
+        const signDate = signTime
+          ? new Date(signTime).toLocaleString("vi-VN")
+          : "Không xác định";
+
+        pdfStandardVerifyResult.innerHTML = `
+          <div style="color:green; line-height:1.8;">
+              <div style="font-size:18px;font-weight:bold;">
+                  ✅ FILE NGUYÊN VẸN
+              </div>
+
+              <div><b>Người ký:</b> ${displayName}</div>
+
+              <div><b>Thời gian ký:</b> ${signDate}</div>
+
+              <div><b>Thuật toán ký:</b> ${signAlgorithm}</div>
+
+              <div><b>Trạng thái:</b> Chữ ký hợp lệ</div>
+          </div>
+          `;
+        showNotification('✅ File chưa bị chỉnh sửa!', 'success');
+      } else {
+        pdfStandardVerifyResult.innerHTML = `<div style="color:red;font-weight:bold;">❌ FILE ĐÃ BỊ CHỈNH SỬA</div>`;
+        showNotification('File đã bị thay đổi!', 'error');
+      }
+    } catch (err) {
+      console.error("Lỗi verify:", err);
+      showNotification('Lỗi verify: ' + err.message, 'error');
+    }
+
+    console.log("=== KẾT THÚC VERIFY ===");
   });
+}
+
+function findSignatureStart(pdfBytes) {
+  const marker = new TextEncoder().encode("%%SIG_START%%");
+
+  for (let i = 0; i <= pdfBytes.length - marker.length; i++) {
+
+    let found = true;
+
+    for (let j = 0; j < marker.length; j++) {
+
+      if (pdfBytes[i + j] !== marker[j]) {
+        found = false;
+        break;
+      }
+
+    }
+
+    if (found) return i;
+  }
+
+  return -1;
 }
 // Xóa hoặc comment bỏ đoạn "if (pdfStandardBtn)" nếu nó gây trùng lặp với nút trên.
 
@@ -772,33 +955,31 @@ async function embedSignatureIntoPDF(pdfBuffer, signatureImageBase64, position) 
   });
 
   // 2. NHÚNG ẢNH DẤU MỘC (Nếu có)
-  if (typeof uploadedStampBase64 !== 'undefined' && uploadedStampBase64) {
+  // NHÚNG DẤU MỘC - CHỈ ADMIN
+  const shouldUseStamp = currentUser && currentUser.username === 'admin' && (uploadedStampBase64 || defaultStampBase64);
+  if (shouldUseStamp) {
     try {
-      const stampBinary = atob(uploadedStampBase64);
+      const stampToUse = uploadedStampBase64 || defaultStampBase64;
+      const stampBinary = atob(stampToUse);
       const stampBytes = new Uint8Array(stampBinary.length);
       for (let i = 0; i < stampBinary.length; i++) stampBytes[i] = stampBinary.charCodeAt(i);
 
       const stampImage = await pdfDoc.embedPng(stampBytes);
-
-      const desiredStampWidth = 120; // Tăng kích thước mộc lên một chút cho rõ
+      const desiredStampWidth = 130;
       const stampScale = desiredStampWidth / stampImage.width;
-      const scaledStampWidth = stampImage.width * stampScale;
-      const scaledStampHeight = stampImage.height * stampScale;
 
-      // Đặt mộc đè lên chữ ký theo chuẩn (Lệch sang trái 40px, cao hơn đáy chữ ký 20px)
-      const stampX = position.x - 40;
-      const stampY = finalY - scaledHeight + 15;
+      const stampX = position.x - 50;
+      const stampY = finalY - 40;
 
       page.drawImage(stampImage, {
-        x: stampX < 10 ? 10 : stampX,
-        y: stampY,
-        width: scaledStampWidth,
-        height: scaledStampHeight,
+        x: Math.max(10, stampX),
+        y: Math.max(10, stampY),
+        width: stampImage.width * stampScale,
+        height: stampImage.height * stampScale,
       });
-      console.log("Đã nhúng thành công dấu mộc vào PDF.");
-    } catch (stampErr) {
-      console.error("Lỗi khi nhúng file dấu mộc vào PDF: ", stampErr);
-      alert("Ảnh dấu mộc không đúng định dạng cấu trúc PNG tiêu chuẩn, không thể nhúng!");
+      console.log("✅ Admin - Đã nhúng dấu mộc đỏ");
+    } catch (e) {
+      console.error("Lỗi nhúng mộc:", e);
     }
   }
 
@@ -809,32 +990,6 @@ async function embedSignatureIntoPDF(pdfBuffer, signatureImageBase64, position) 
 
   return signedBytes;
 }
-
-// async function embedSignatureIntoPDF(pdfBuffer, signatureImageBase64, position) {
-//   const { PDFDocument } = window.PDFLib;
-//   const pdfDoc = await PDFDocument.load(pdfBuffer);
-//   const page = pdfDoc.getPages()[position.page - 1];
-//   const { height: pageHeight } = page.getSize();
-//   const binaryString = atob(signatureImageBase64);
-//   const len = binaryString.length;
-//   const bytes = new Uint8Array(len);
-//   for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-//   const pngImage = await pdfDoc.embedPng(bytes);
-//   const desiredWidth = 150;
-//   const scaleFactor = desiredWidth / pngImage.width;
-//   const scaledWidth = pngImage.width * scaleFactor;
-//   const scaledHeight = pngImage.height * scaleFactor;
-//   let finalY = position.y;
-//   if (finalY > pageHeight) finalY = pageHeight - 50;
-//   if (finalY - scaledHeight < 0) finalY = scaledHeight + 10;
-//   page.drawImage(pngImage, {
-//     x: position.x,
-//     y: finalY - scaledHeight,
-//     width: scaledWidth,
-//     height: scaledHeight,
-//   });
-//   return await pdfDoc.save();
-// }
 
 // Hàm nhúng văn bản 2 dòng (đã sửa lỗi font)
 async function embedTextIntoPDF(pdfBuffer, username, timestamp, position) {
@@ -870,7 +1025,7 @@ async function embedTextIntoPDF(pdfBuffer, username, timestamp, position) {
     y: y,
     size: fontSize,
     font: font,
-    color: rgb(0, 0, 0),
+    color: rgb(1, 0, 0),
   });
   // Vẽ dòng thứ nhất (người ký) ở trên (cách 1 dòng)
   page.drawText(safeText1, {
@@ -878,38 +1033,38 @@ async function embedTextIntoPDF(pdfBuffer, username, timestamp, position) {
     y: y + lineHeight,
     size: fontSize,
     font: font,
-    color: rgb(0, 0, 0),
+    color: rgb(1, 0, 0),
   });
 
   // --- THÊM LOGIC NHÚNG MỘC ĐỎ DỰA TRÊN FORMAT CỦA BẠN ---
-  if (uploadedStampBase64) {
+  // Trong embedTextIntoPDF và embedSignatureIntoPDF, thay phần nhúng mộc cũ bằng:
+  const stampToUse = uploadedStampBase64 || defaultStampBase64;
+
+  // NHÚNG DẤU MỘC - CHỈ ADMIN
+  const shouldUseStamp = currentUser && currentUser.username === 'admin' && (uploadedStampBase64 || defaultStampBase64);
+  if (shouldUseStamp) {
     try {
-      console.log("Tiến hành nhúng mộc đỏ vào PDF...");
-      const stampBinary = atob(uploadedStampBase64);
+      const stampToUse = uploadedStampBase64 || defaultStampBase64;
+      const stampBinary = atob(stampToUse);
       const stampBytes = new Uint8Array(stampBinary.length);
       for (let i = 0; i < stampBinary.length; i++) stampBytes[i] = stampBinary.charCodeAt(i);
 
       const stampImage = await pdfDoc.embedPng(stampBytes);
-
-      // Định cấu hình kích thước mộc tròn
-      const desiredStampWidth = 100;
+      const desiredStampWidth = 120;
       const stampScale = desiredStampWidth / stampImage.width;
-      const scaledStampWidth = stampImage.width * stampScale;
-      const scaledStampHeight = stampImage.height * stampScale;
 
-      // Căn chỉnh mộc nằm đè lệch trái so với khối text chữ ký
-      const stampX = position.x - 40;
-      const stampY = y - 40; // Đẩy dịch xuống dưới dòng 2 một chút
+      const stampX = position.x - 45;
+      const stampY = y - 45;
 
       page.drawImage(stampImage, {
-        x: stampX < 10 ? 10 : stampX,
-        y: stampY < 10 ? 10 : stampY,
-        width: scaledStampWidth,
-        height: scaledStampHeight,
+        x: Math.max(10, stampX),
+        y: Math.max(10, stampY),
+        width: stampImage.width * stampScale,
+        height: stampImage.height * stampScale,
       });
-      console.log("✅ KẾT QUẢ: Đã nhúng mộc đỏ thành công vào PDF.");
-    } catch (stampErr) {
-      console.error("❌ LỖI TRONG QUÁ TRÌNH BIÊN DỊCH VÀ VẼ ẢNH MỘC:", stampErr);
+      console.log("✅ Admin - Đã nhúng dấu mộc đỏ vào chữ ký văn bản");
+    } catch (e) {
+      console.error("Lỗi nhúng mộc:", e);
     }
   } else {
     console.warn("⚠️ THÔNG BÁO: Bỏ qua nhúng mộc vì không có ảnh nào được tải lên (uploadedStampBase64 rỗng).");
@@ -923,55 +1078,163 @@ async function embedTextIntoPDF(pdfBuffer, username, timestamp, position) {
   return signedBytes;
 }
 
+// ========== HÀM KÝ ĐẦY ĐỦ: ẢNH + TEXT + MỘC (CẢI TIẾN THEO MẪU) ==========
+async function embedFullSignature(pdfBuffer, signatureImageBase64, position) {
+  const { PDFDocument, rgb, StandardFonts } = window.PDFLib;
+  const pdfDoc = await PDFDocument.load(pdfBuffer);
+  const page = pdfDoc.getPages()[position.page - 1];
+  const { height: pageHeight } = page.getSize();
+
+  const baseX = position.x;
+  const baseY = position.y;
+
+  // ====================== ĐIỀU CHỈNH VỊ TRÍ TẠI ĐÂY ======================
+  const stampWidth = 100;      // Kích thước dấu mộc
+  const sigWidth = 80;      // Kích thước chữ ký ảnh
+  const textFontSize = 11.5;
+
+  // 1. Nhúng DẤU MỘC ĐỎ (Bên trái)
+  const shouldUseStamp = currentUser && currentUser.username === 'admin' && (uploadedStampBase64 || defaultStampBase64);
+  if (shouldUseStamp) {
+    try {
+      const stampToUse = uploadedStampBase64 || defaultStampBase64;
+      const stampBinary = atob(stampToUse);
+      const stampBytes = new Uint8Array(stampBinary.length);
+      for (let i = 0; i < stampBinary.length; i++) stampBytes[i] = stampBinary.charCodeAt(i);
+
+      const stampImage = await pdfDoc.embedPng(stampBytes);
+      const scale = stampWidth / stampImage.width;
+
+      const stampX = baseX - 20;           // Dấu mộc nằm bên trái
+      const stampY = baseY - 10;
+
+      page.drawImage(stampImage, {
+        x: Math.max(15, stampX),
+        y: Math.max(20, stampY),
+        width: stampImage.width * scale,
+        height: stampImage.height * scale,
+      });
+      console.log("✅ Đã nhúng dấu mộc đỏ");
+    } catch (e) {
+      console.error("Lỗi nhúng mộc:", e);
+    }
+  }
+
+  // 2. Nhúng ẢNH CHỮ KÝ (Bên phải dấu mộc)
+  let signatureBottomY = baseY;
+  if (signatureImageBase64) {
+    const binaryString = atob(signatureImageBase64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+
+    const pngImage = await pdfDoc.embedPng(bytes);
+    const scaleFactor = sigWidth / pngImage.width;
+    const sigHeight = pngImage.height * scaleFactor;
+
+    const sigX = baseX + 30;                    // ← Đẩy chữ ký sang phải dấu mộc
+    const sigY = baseY - sigHeight / 2 + 30;    // Căn giữa chiều dọc với dấu mộc
+
+    page.drawImage(pngImage, {
+      x: sigX,
+      y: sigY,
+      width: sigWidth,
+      height: sigHeight,
+    });
+
+    signatureBottomY = sigY;
+    console.log("✅ Đã nhúng chữ ký ảnh");
+  }
+
+  // 3. Nhúng TEXT (Ngay dưới chữ ký)
+  let customText = signatureTextInput.value.trim() || currentUser.displayName;
+
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const lineHeight = textFontSize * 1.7;
+
+  const text1 = `Ký bởi: ${customText}`;
+  // const text2 = `Vào lúc: ${new Date().toLocaleString('vi-VN')}`;
+
+  const safeText1 = removeVietnameseTones(text1);
+  // const safeText2 = removeVietnameseTones(text2);
+
+  const textX = baseX + 95;   // Căn lề với chữ ký ảnh
+
+  page.drawText(safeText1, {
+    x: textX,
+    y: signatureBottomY + 30,                    // Dòng "Ký bởi"
+    size: textFontSize,
+    font: font,
+    color: rgb(1, 0, 0),
+  });
+  // page.drawText(safeText2, {
+  //   x: textX,
+  //   y: signatureBottomY + 10,                    // Dòng "Ký bởi"
+  //   size: textFontSize,
+  //   font: font,
+  //   color: rgb(1, 0, 0),
+  // });
+
+  // Lưu PDF
+  let signedBytes = await pdfDoc.save();
+  signedBytes = await appendCryptoSignature(signedBytes, currentUser.username);
+
+  return signedBytes;
+}
+
 // Sự kiện nút "Đặt chữ ký" (ưu tiên ảnh kéo thả, sau đó ảnh tải lên, cuối cùng vẽ tay)
+// Sự kiện nút "Đặt chữ ký (ảnh)" → Giờ sẽ ký cả ảnh + text
+// Sự kiện nút "Đặt chữ ký (ảnh)" - Ưu tiên upload > mặc định
 confirmSignBtn.addEventListener('click', async () => {
   if (!currentUser) return showNotification('Vui lòng đăng nhập!', 'warning');
   if (!currentPdfBuffer || !selectedPosition) {
     showNotification('Hãy tải PDF và chọn vị trí!', 'warning');
     return;
   }
+
   let base64Data = null;
+
+  // Ưu tiên: Kéo thả → Upload → Mặc định theo username
   if (droppedSignatureBase64) {
     base64Data = droppedSignatureBase64;
     droppedSignatureBase64 = null;
     showNotification('Sử dụng ảnh vừa kéo thả', 'info');
   } else if (uploadedSignatureBase64) {
     base64Data = uploadedSignatureBase64;
-    showNotification('Sử dụng ảnh đã tải lên', 'info');
+    showNotification('Sử dụng ảnh chữ ký đã upload', 'info');
+  } else if (defaultSignatureBase64) {
+    base64Data = defaultSignatureBase64;
+    showNotification(`Sử dụng chữ ký mặc định của ${currentUser.username}`, 'info');
   } else {
+    // Fallback nếu không có gì
     let sigDataURL = signatureCanvas.toDataURL('image/png');
     base64Data = sigDataURL.split(',')[1];
-    if (base64Data.length < 100) {
-      ctxSig.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
-      ctxSig.font = '20px Arial';
-      ctxSig.fillStyle = '#000';
-      ctxSig.fillText('Chu ky dien tu', 20, 50);
-      sigDataURL = signatureCanvas.toDataURL('image/png');
-      base64Data = sigDataURL.split(',')[1];
-      showNotification('Canvas trống, đã thêm chữ mặc định (không dấu)', 'warning');
-    }
+    showNotification('Sử dụng chữ ký vẽ tay mặc định', 'warning');
   }
+
   if (!base64Data) {
-    showNotification('Không có chữ ký!', 'error');
+    showNotification('Không tìm thấy chữ ký!', 'error');
     return;
   }
+
   try {
-    showNotification('Đang nhúng chữ ký...', 'info');
-    const signedBytes = await embedSignatureIntoPDF(currentPdfBuffer, base64Data, selectedPosition);
+    showNotification('Đang nhúng chữ ký ảnh + text + mộc...', 'info');
+
+    const signedBytes = await embedFullSignature(currentPdfBuffer, base64Data, selectedPosition);
+
     const blob = new Blob([signedBytes], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `signed_image_page${selectedPosition.page}.pdf`;
+    a.download = `signed_full_${currentUser.username}_page${selectedPosition.page}.pdf`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showNotification('Ký thành công!', 'success');
-    pdfSignStatus.innerHTML += '<br/>✅ Đã ký (ảnh).';
+
+    showNotification('✅ Ký thành công (Ảnh + Text + Mộc)', 'success');
   } catch (err) {
     console.error(err);
-    showNotification('Lỗi: ' + err.message, 'error');
+    showNotification('Lỗi khi ký: ' + err.message, 'error');
   }
 });
 
