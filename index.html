@@ -49,7 +49,7 @@
         <button id="loginBtn" style="margin-top:18px;">Đăng nhập</button>
       </div>
       <div style="margin-top:10px; font-size:14px; color:#555;">
-        <strong>Tài khoản mặc định:</strong> admin/admin123, user1/user123, user2/user123
+        <!-- <strong>Tài khoản mặc định:</strong> admin/admin123, user1/user123, user2/user123 -->
       </div>
       <div id="loginStatus" style="margin-top:10px; font-weight:bold;"></div>
     </div>
@@ -152,13 +152,13 @@
         </div>
       </div>
       <div id="pdfSignStatus" class="status-box"></div>
-      <p class="note"><small>Lưu ý: Chữ ký ảnh và dạng chữ đều được nhúng vào PDF tại vị trí đã chọn. Kéo thả ảnh PNG
-          trực tiếp lên bản xem trước để đặt nhanh.</small></p>
+      <!-- <p class="note"><small>Lưu ý: Chữ ký ảnh và dạng chữ đều được nhúng vào PDF tại vị trí đã chọn. Kéo thả ảnh PNG
+          trực tiếp lên bản xem trước để đặt nhanh.</small></p> -->
     </div>
 
-    <!-- Phần 5: Xác thực chữ ký chuẩn (PKCS#7) từ PDF -->
+    <!-- Phần 5: Xác thực chữ ký chuẩn  -->
     <div class="card">
-      <h2>🔍 5. Xác thực chữ ký chuẩn (PKCS#7) từ PDF</h2>
+      <h2>🔍 5. Xác thực chữ ký từ PDF</h2>
       <p>Chọn file PDF đã được ký số bằng chứng chỉ thực và kiểm tra kết quả xác thực.</p>
       <input type="file" id="verifyPdfStandardInput" accept=".pdf" disabled />
       <button id="verifyPdfStandardBtn" disabled>✅ Xác thực PDF</button>
@@ -171,8 +171,8 @@
       <!-- THÊM NÚT TẠO PDF MẪU -->
       <hr />
       <button id="createSamplePdfBtn" style="margin-top: 10px;">🖨️ Tạo PDF mẫu có chữ ký (mock)</button>
-      <p><small>Nhấn nút này để tạo một file PDF mẫu chứa các từ khóa chữ ký số. Sau đó tải lên và nhấn "Xác thực PDF"
-          để kiểm tra.</small></p>
+      <!-- <p><small>Nhấn nút này để tạo một file PDF mẫu chứa các từ khóa chữ ký số. Sau đó tải lên và nhấn "Xác thực PDF"
+          để kiểm tra.</small></p> -->
     </div>
 
     <!-- Import các module -->
